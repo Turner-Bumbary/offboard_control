@@ -49,6 +49,6 @@ def generate_launch_description():
             namespace='px4_offboard',
             executable='offboard_control',
             name='control',
-            parameters= [{'radius': 2.0},{'altitude': 3.0},{'omega': 0.5}]
+            parameters= [{'radius': 1.0},{'altitude': 2.0},{'omega': 0.5}]
         )
     ])

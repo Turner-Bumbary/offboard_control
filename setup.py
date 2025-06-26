@@ -28,6 +28,7 @@ setup(
         'console_scripts': [
                 'offboard_control = px4_offboard.offboard_control:main',
                 'visualizer = px4_offboard.visualizer:main',
+                'stationary_capture = px4_offboard.stationary_capture:main',
         ],
     },
 )

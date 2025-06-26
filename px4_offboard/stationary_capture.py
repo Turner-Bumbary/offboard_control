@@ -44,7 +44,10 @@ from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy, QoSDur
 from px4_msgs.msg import OffboardControlMode
 from px4_msgs.msg import TrajectorySetpoint
 from px4_msgs.msg import VehicleStatus
+from px4_msgs.msg import VehicleOdometry
 
+from vicon_receiver.msg import Position
+from math import nan
 
 class OffboardControl(Node):
 
@@ -57,39 +60,39 @@ class OffboardControl(Node):
             depth=1
         )
 
-        self.status_sub = self.create_subscription(
-            VehicleStatus,
-            '/fmu/out/vehicle_status',
-            self.vehicle_status_callback,
-            qos_profile)
-        self.publisher_offboard_mode = self.create_publisher(OffboardControlMode, '/fmu/in/offboard_control_mode', qos_profile)
-        self.publisher_trajectory = self.create_publisher(TrajectorySetpoint, '/fmu/in/trajectory_setpoint', qos_profile)
+        # Create subscribers and publishers
+        self.mocap_sub = self.create_subscription(Position, 
+            '/vicon/Turner_small_drone/Turner_small_drone', self.mocap_callback, 10)
+        self.vehicle_odometry_sub = self.create_subscription(VehicleOdometry, 
+            "/fmu/out/vehicle_odometry", self.vehicle_odom_callback, qos_profile)
+        self.publisher_offboard_mode = self.create_publisher(OffboardControlMode, 
+            '/fmu/in/offboard_control_mode', qos_profile)
+        self.publisher_trajectory = self.create_publisher(TrajectorySetpoint, 
+            '/fmu/in/trajectory_setpoint', qos_profile)
         timer_period = 0.2  # seconds
         self.timer = self.create_timer(timer_period, self.cmdloop_callback)
-        self.dt = timer_period
-        self.declare_parameter('radius', 1.0)
-        self.declare_parameter('omega', 0.5)
-        self.declare_parameter('altitude', 1.5)
-        self.nav_state = VehicleStatus.NAVIGATION_STATE_MAX
-        self.arming_state = VehicleStatus.ARMING_STATE_DISARMED
-        # Note: no parameter callbacks are used to prevent sudden inflight changes of radii and omega 
-        # which would result in large discontinuities in setpoints
-        self.theta = 0.0
-        self.radius = self.get_parameter('radius').value
-        self.omega = self.get_parameter('omega').value
-        self.altitude = self.get_parameter('altitude').value
- 
-    def vehicle_status_callback(self, msg):
-        # TODO: handle NED->ENU transformation
-        print("NAV_STATUS: ", msg.nav_state)
-        print("  - offboard status: ", VehicleStatus.NAVIGATION_STATE_OFFBOARD)
-        self.nav_state = msg.nav_state
-        self.arming_state = msg.arming_state
-
+        
+        # Intialize Variables
+        self.timesync = 0
+        self.position_setpoint = None
+        
+        self.get_logger().info("Initialized offboard control node.")
+        
+    # Vicon motion capture callback function. Stores position setpoint of vehicle.
+    def mocap_callback(self, msg):
+        # Get position data from Vicon message (ENU coordinates)
+        x_pos = msg.x_trans/1000.0
+        y_pos = msg.y_trans/1000.0
+        z_pos = msg.z_trans/1000.0
+        
+        # Convert and store ENU coordinates as FRD coordinates for PX4
+        enu_coordinates = np.float32([x_pos, y_pos, z_pos])
+        self.position_setpoint = np.float32([enu_coordinates[1], enu_coordinates[0], -enu_coordinates[2]])
+        
     def cmdloop_callback(self):
         # Publish offboard control modes
         offboard_msg = OffboardControlMode()
-        offboard_msg.timestamp = int(Clock().now().nanoseconds / 1000)
+        offboard_msg.timestamp = self.timesync
         offboard_msg.position=True
         offboard_msg.velocity=False
         offboard_msg.acceleration=False
@@ -97,12 +100,19 @@ class OffboardControl(Node):
 
         # Publish trajectory of drone
         trajectory_msg = TrajectorySetpoint()
-        trajectory_msg.position[0] = self.radius * np.cos(self.theta)
-        trajectory_msg.position[1] = self.radius * np.sin(self.theta)
-        trajectory_msg.position[2] = -self.altitude
+        if self.position_setpoint is not None:
+            trajectory_msg.position[0] = float(self.position_setpoint[0])
+            trajectory_msg.position[1] = float(self.position_setpoint[1])
+            trajectory_msg.position[2] = float(self.position_setpoint[2])
+        else:
+            trajectory_msg.position[0] = nan
+            trajectory_msg.position[1] = nan
+            trajectory_msg.position[2] = nan
         self.publisher_trajectory.publish(trajectory_msg)
-
-        self.theta = self.theta + self.omega * self.dt
+        
+    # Callback to keep timestamp for synchronization purposes
+    def vehicle_odom_callback(self, msg):
+        self.timesync = msg.timestamp
 
 
 def main(args=None):

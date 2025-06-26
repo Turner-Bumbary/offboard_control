@@ -55,7 +55,7 @@ def generate_launch_description():
             namespace='px4_offboard',
             executable='offboard_control',
             name='control',
-            parameters= [{'radius': 10.0},{'altitude': 5.0},{'omega': 0.5}]
+            parameters= [{'radius': 1.0},{'altitude': 1.5},{'omega': 0.5}]
         ),
         Node(
             package='rviz2',
