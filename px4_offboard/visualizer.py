@@ -56,6 +56,7 @@ class PX4Visualizer(Node):
         # Declare and retrieve the namespace parameter
         self.declare_parameter('namespace', '')  # Default to empty namespace
         self.namespace = self.get_parameter('namespace').value
+        self.get_logger().info(f"Using namespace: {self.namespace}")
         self.namespace_prefix = f'/{self.namespace}' if self.namespace else ''
 
         # QoS profiles

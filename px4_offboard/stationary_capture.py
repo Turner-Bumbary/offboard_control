@@ -76,7 +76,7 @@ class OffboardControl(Node):
         
         # Intialize Variables
         self.timesync = 0
-        self.position_setpoint = None
+        self.position_setpoint = [2, 2, -2]
         
         self.get_logger().info("Initialized offboard control node.")
         
