@@ -49,6 +49,8 @@ from px4_msgs.msg import VehicleOdometry
 from vicon_receiver.msg import Position
 from math import nan
 
+VETICAL_OFFSET = 0.013 # m
+
 class OffboardControl(Node):
 
     def __init__(self):
@@ -87,7 +89,7 @@ class OffboardControl(Node):
         
         # Convert and store ENU coordinates as FRD coordinates for PX4
         enu_coordinates = np.float32([x_pos, y_pos, z_pos])
-        self.position_setpoint = np.float32([enu_coordinates[1], enu_coordinates[0], -enu_coordinates[2]])
+        self.position_setpoint = np.float32([enu_coordinates[1], enu_coordinates[0], -(enu_coordinates[2] - VETICAL_OFFSET)])
         
     def cmdloop_callback(self):
         # Publish offboard control modes
