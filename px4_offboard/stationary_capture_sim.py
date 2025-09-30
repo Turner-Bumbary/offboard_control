@@ -43,10 +43,8 @@ from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy, QoSDur
 
 from px4_msgs.msg import OffboardControlMode
 from px4_msgs.msg import TrajectorySetpoint
-from px4_msgs.msg import VehicleLocalPosition
 from px4_msgs.msg import VehicleOdometry
 from px4_msgs.msg import ActuatorServos
-from std_msgs.msg import Bool
 
 from vicon_receiver.msg import Position
 from math import nan
@@ -65,45 +63,31 @@ class OffboardControl(Node):
         )
 
         # Create subscribers and publishers
-        self.local_position_sub = self.create_subscription(VehicleLocalPosition,
-            '/fmu/out/vehicle_local_position', self.local_position_callback, qos_profile)
-        self.mocap_sub = self.create_subscription(Position, 
-            '/vicon/Turner_small_drone/Turner_small_drone', self.mocap_callback, 10)
-        # self.vehicle_odometry_sub = self.create_subscription(VehicleOdometry, 
-        #     "/fmu/out/vehicle_odometry", self.vehicle_odom_callback, qos_profile)
+        # self.local_position_sub = self.create_subscription(VehicleLocalPosition,
+        #     '/fmu/out/vehicle_local_position', self.local_position_callback, qos_profile)
+        self.vehicle_odometry_sub = self.create_subscription(VehicleOdometry, 
+            "/fmu/out/vehicle_odometry", self.vehicle_odom_callback, qos_profile)
         self.publisher_offboard_mode = self.create_publisher(OffboardControlMode, 
             '/fmu/in/offboard_control_mode', qos_profile)
         self.publisher_trajectory = self.create_publisher(TrajectorySetpoint, 
             '/fmu/in/trajectory_setpoint', qos_profile)
-        self.actuate_servo_pub = self.create_publisher(Bool, 
-            '/actuate_servo', 10)
-        
-        timer_period = 0.5  # seconds
+        self.actuator_servos = self.create_publisher(ActuatorServos,
+            '/fmu/in/actuator_servos', qos_profile)
+        timer_period = 0.45  # seconds
         self.timer = self.create_timer(timer_period, self.cmdloop_callback)
         
         # Intialize Variables
         self.timesync = 0
-        self.position_setpoint = None
+        self.position_setpoint = np.float32([1,1,-1])
         self.local_position = None
         self.is_target_captured = False
         
         self.get_logger().info("Initialized offboard control node.")
         
-    # Vicon motion capture callback function. Stores position setpoint of vehicle.
-    def mocap_callback(self, msg):
-        # Get position data from Vicon message (ENU coordinates)
-        x_pos = msg.x_trans/1000.0
-        y_pos = msg.y_trans/1000.0
-        z_pos = msg.z_trans/1000.0
-        
-        # Convert and store ENU coordinates as FRD coordinates for PX4
-        enu_coordinates = np.float32([x_pos, y_pos, z_pos])
-        self.position_setpoint = np.float32([enu_coordinates[1], enu_coordinates[0], -(enu_coordinates[2] - VETICAL_OFFSET)])
         
     # Callback function for local position subscriber.
     def local_position_callback(self, msg):
         # Calculate distance between drone and target vehicle
-        self.timesync = msg.timestamp
         self.local_position = np.float32([msg.x, msg.y, msg.z])
         if not (self.position_setpoint is None):
             dist = np.linalg.norm(self.local_position - self.position_setpoint)
@@ -123,16 +107,11 @@ class OffboardControl(Node):
         offboard_msg.acceleration=False
         self.publisher_offboard_mode.publish(offboard_msg)
         
-        # # Publish servo commands
-        # servo_msg = ActuatorServos()
-        # servo_msg.timestamp = self.timesync
-        # servo_msg.control = [nan, nan, nan, nan, nan, nan, nan, nan] # Placeholder for servo commands
+        # Publish servo commands
+        servo_msg = ActuatorServos()
+        servo_msg.timestamp = self.timesync
+        servo_msg.control = [nan, nan, nan, nan, nan, nan, nan, nan] # Placeholder for servo commands
         
-        # Publishs servo actuate command
-        if self.is_target_captured:
-            actuate_servo_msg = Bool()
-            actuate_servo_msg.data = True            
-            self.actuate_servo_pub.publish(actuate_servo_msg)
 
         # Publish trajectory of drone
         trajectory_msg = TrajectorySetpoint()
@@ -140,23 +119,34 @@ class OffboardControl(Node):
             trajectory_msg.position[0] = 0.0
             trajectory_msg.position[1] = 0.0
             trajectory_msg.position[2] = -0.1
-            # servo_msg.control[0] = 1.0 # Close servo 
+            servo_msg.control[0] = 1.0 # Close servo 
         elif self.position_setpoint is not None:
             trajectory_msg.position[0] = float(self.position_setpoint[0])
             trajectory_msg.position[1] = float(self.position_setpoint[1])
             trajectory_msg.position[2] = float(self.position_setpoint[2])
-            # servo_msg.control[0] = -1.0 # Open servo
+            servo_msg.control[0] = -1.0 # Open servo
         else:
             trajectory_msg.position[0] = nan
             trajectory_msg.position[1] = nan
             trajectory_msg.position[2] = nan
-            # servo_msg.control[0] = nan # Disarm servo
-            
-        self.publisher_trajectory.publish(trajectory_msg)
+            servo_msg.control[0] = nan # Disarm servo
         
-    # # Callback to keep timestamp for synchronization purposes
-    # def vehicle_odom_callback(self, msg):
-    #     self.timesync = msg.timestamp
+        self.publisher_trajectory.publish(trajectory_msg)
+        self.actuator_servos.publish(servo_msg)
+        
+    # Callback to keep timestamp for synchronization purposes
+    def vehicle_odom_callback(self, msg):
+        self.timesync = msg.timestamp
+        self.local_position = np.float32([msg.position[0], msg.position[1], msg.position[2]])
+        
+        if not (self.position_setpoint is None):
+            dist = np.linalg.norm(self.local_position - self.position_setpoint)
+        else:
+            dist = np.inf
+        
+        if dist < 0.1:
+            self.is_target_captured = True
+            self.get_logger().info("Captured target.")
 
 
 def main(args=None):

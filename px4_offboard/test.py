@@ -42,9 +42,15 @@ from rclpy.clock import Clock
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy, QoSDurabilityPolicy
 
 from px4_msgs.msg import OffboardControlMode
+from px4_msgs.msg import VehicleOdometry
+from px4_msgs.msg import ActuatorMotors
+from px4_msgs.msg import ActuatorServos
 from px4_msgs.msg import TrajectorySetpoint
-from px4_msgs.msg import VehicleStatus
 
+from vicon_receiver.msg import Position
+from math import nan
+
+VETICAL_OFFSET = 0.013 # m
 
 class OffboardControl(Node):
 
@@ -56,40 +62,60 @@ class OffboardControl(Node):
             history=QoSHistoryPolicy.KEEP_LAST,
             depth=1
         )
-
-        self.status_sub = self.create_subscription(
-            VehicleStatus,
-            '/fmu/out/vehicle_status',
-            self.vehicle_status_callback,
-            qos_profile)
-        self.publisher_offboard_mode = self.create_publisher(OffboardControlMode, '/fmu/in/offboard_control_mode', qos_profile)
-        self.publisher_trajectory = self.create_publisher(TrajectorySetpoint, '/fmu/in/trajectory_setpoint', qos_profile)
-        timer_period = 0.45  # seconds
+        
+        # Motion capture subscribers
+        self.mocap_sub = self.create_subscription(Position, 
+            '/vicon/Turner_x500/Turner_x500', self.x500_callback, 10)
+        
+        # Vehicle position/clock subscriber
+        self.vehicle_attitude_sub = self.create_subscription(VehicleOdometry, 
+            "/fmu/out/vehicle_attitude", self.vehicle_attitude_callback, qos_profile) 
+        
+        # External vision publisher
+        self.vehicle_odometry_pub = self.create_publisher(VehicleOdometry, 
+            '/fmu/in/vehicle_visual_odometry', qos_profile)
+        
+        # Offboard control publishers
+        self.publisher_offboard_mode = self.create_publisher(OffboardControlMode, 
+            '/fmu/in/offboard_control_mode', qos_profile)
+        self.publisher_trajectory = self.create_publisher(TrajectorySetpoint, 
+            '/fmu/in/trajectory_setpoint', qos_profile)
+        
+        timer_period = 0.5  # seconds
         self.timer = self.create_timer(timer_period, self.cmdloop_callback)
-        self.dt = timer_period
-        self.declare_parameter('radius', 1.0)
-        self.declare_parameter('omega', 0.5)
-        self.declare_parameter('altitude', 1.5)
-        self.nav_state = VehicleStatus.NAVIGATION_STATE_MAX
-        self.arming_state = VehicleStatus.ARMING_STATE_DISARMED
-        # Note: no parameter callbacks are used to prevent sudden inflight changes of radii and omega 
-        # which would result in large discontinuities in setpoints
-        self.theta = 0.0
-        self.radius = self.get_parameter('radius').value
-        self.omega = self.get_parameter('omega').value
-        self.altitude = self.get_parameter('altitude').value
- 
-    def vehicle_status_callback(self, msg):
-        # TODO: handle NED->ENU transformation
-        print("NAV_STATUS: ", msg.nav_state)
-        print("  - offboard status: ", VehicleStatus.NAVIGATION_STATE_OFFBOARD)
-        self.nav_state = msg.nav_state
-        self.arming_state = msg.arming_state
-
+        
+        # Intialize Variables
+        self.timesync = 0
+        
+        self.get_logger().info("Initialized stationary_capture_v3.")
+        
+    # Callback function for local position subscriber.
+    def x500_callback(self, msg):
+        # Get position data from Vicon message (ENU coordinates)
+        x_pos = msg.x_trans/1000.0
+        y_pos = msg.y_trans/1000.0
+        z_pos = msg.z_trans/1000.0
+        
+        # Convert and store ENU coordinates as FRD coordinates for PX
+        enu_coordinates = np.float32([x_pos, y_pos, z_pos])
+        frd_coordinates = np.float32([enu_coordinates[1], enu_coordinates[0], -enu_coordinates[2]])
+        
+        
+        # Publish Vicon position as external vision odometry message to PX4
+        if np.any(frd_coordinates): # If vicon coordinates are non-zero publish coordiantes
+            # Create PX4 message from Vicon position data
+            msg_px4 = VehicleOdometry() # Message to be sent to PX4
+            msg_px4.timestamp = self.timesync # Set timestamp
+            msg_px4.timestamp_sample = self.timesync # Timestamp for mocap sample
+            msg_px4.pose_frame = 2 # FRD from px4 message
+            msg_px4.position = frd_coordinates.tolist() # Convert numpy array to list
+            msg_px4.position_variance = [10**(-6), 10**(-6), 10**(-6)] # Assuming 1mmm standard deviation in world error
+            self.vehicle_odometry_pub.publish(msg_px4)
+            
     def cmdloop_callback(self):
         # Publish offboard control modes
         offboard_msg = OffboardControlMode()
-        offboard_msg.timestamp = int(Clock().now().nanoseconds / 1000)
+        offboard_msg.timestamp = self.timesync
         offboard_msg.position=True
         offboard_msg.velocity=False
         offboard_msg.acceleration=False
@@ -97,13 +123,14 @@ class OffboardControl(Node):
 
         # Publish trajectory of drone
         trajectory_msg = TrajectorySetpoint()
-        trajectory_msg.position[0] = self.radius * np.cos(self.theta)
-        trajectory_msg.position[1] = self.radius * np.sin(self.theta)
-        trajectory_msg.position[2] = -self.altitude
+        trajectory_msg.position[0] = 2.0**0.5
+        trajectory_msg.position[1] = 2.0**0.5
+        trajectory_msg.position[2] = -2.0           
         self.publisher_trajectory.publish(trajectory_msg)
-
-        self.theta = self.theta + self.omega * self.dt
-
+        
+    # Callback to keep timestamp for synchronization purposes
+    def vehicle_attitude_callback(self, msg):
+        self.timesync = msg.timestamp
 
 def main(args=None):
     rclpy.init(args=args)
@@ -114,7 +141,6 @@ def main(args=None):
 
     offboard_control.destroy_node()
     rclpy.shutdown()
-
 
 if __name__ == '__main__':
     main()
