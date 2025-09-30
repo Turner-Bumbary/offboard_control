@@ -49,19 +49,19 @@ class OffboardControl(Node):
 
     def __init__(self):
         super().__init__('minimal_publisher')
-
+        
         # Declare and retrieve the namespace parameter
         self.declare_parameter('namespace', '')  # Default to empty namespace
         self.namespace = self.get_parameter('namespace').value
         self.namespace_prefix = f'/{self.namespace}' if self.namespace else ''
         
-                # QoS profiles
+        # QoS profiles
         qos_profile_pub = QoSProfile(
             reliability=QoSReliabilityPolicy.BEST_EFFORT,
             durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
             history=QoSHistoryPolicy.KEEP_LAST,
             depth=0
-        )
+        )        
 
         qos_profile_sub = QoSProfile(
             reliability=QoSReliabilityPolicy.BEST_EFFORT,
@@ -70,19 +70,17 @@ class OffboardControl(Node):
             depth=0
         )
 
-        self.status_sub = self.create_subscription(
-            VehicleStatus,
-            # f'{self.namespace_prefix}/fmu/out/vehicle_status',
-            '/fmu/out/vehicle_status',
-            self.vehicle_status_callback,
-            qos_profile_sub)
-        # self.publisher_offboard_mode = self.create_publisher(OffboardControlMode, f'{self.namespace_prefix}/fmu/in/offboard_control_mode', qos_profile_pub)
-        # self.publisher_trajectory = self.create_publisher(TrajectorySetpoint, f'{self.namespace_prefix}/fmu/in/trajectory_setpoint', qos_profile_pub)
-        self.publisher_offboard_mode = self.create_publisher(OffboardControlMode, '/fmu/in/offboard_control_mode', qos_profile_pub)
-        self.publisher_trajectory = self.create_publisher(TrajectorySetpoint, '/fmu/in/trajectory_setpoint', qos_profile_pub)
-        timer_period = 0.1  # seconds
+        # Subscribers and Publishers
+        self.status_sub = self.create_subscription(VehicleStatus, f'{self.namespace_prefix}/fmu/out/vehicle_status', self.vehicle_status_callback, qos_profile_sub)
+        self.publisher_offboard_mode = self.create_publisher(OffboardControlMode, f'{self.namespace_prefix}/fmu/out/vehicle_status', qos_profile_pub)
+        self.publisher_trajectory = self.create_publisher(TrajectorySetpoint, f'{self.namespace_prefix}/fmu/out/vehicle_status', qos_profile_pub)
+        
+        # Timers
+        timer_period = 0.45  # seconds
         self.timer = self.create_timer(timer_period, self.cmdloop_callback)
         self.dt = timer_period
+        
+        # Parameters and variables
         self.declare_parameter('radius', 1.0)
         self.declare_parameter('omega', 0.5)
         self.declare_parameter('altitude', 1.5)

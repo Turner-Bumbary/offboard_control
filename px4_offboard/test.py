@@ -42,11 +42,10 @@ from rclpy.clock import Clock
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy, QoSDurabilityPolicy
 
 from px4_msgs.msg import OffboardControlMode
-from px4_msgs.msg import TrajectorySetpoint
-from px4_msgs.msg import VehicleLocalPosition
 from px4_msgs.msg import VehicleOdometry
+from px4_msgs.msg import ActuatorMotors
 from px4_msgs.msg import ActuatorServos
-from std_msgs.msg import Bool
+from px4_msgs.msg import TrajectorySetpoint
 
 from vicon_receiver.msg import Position
 from math import nan
@@ -63,56 +62,55 @@ class OffboardControl(Node):
             history=QoSHistoryPolicy.KEEP_LAST,
             depth=1
         )
-
-        # Create subscribers and publishers
-        self.local_position_sub = self.create_subscription(VehicleLocalPosition,
-            '/fmu/out/vehicle_local_position', self.local_position_callback, qos_profile)
+        
+        # Motion capture subscribers
         self.mocap_sub = self.create_subscription(Position, 
-            '/vicon/Turner_small_drone/Turner_small_drone', self.mocap_callback, 10)
-        # self.vehicle_odometry_sub = self.create_subscription(VehicleOdometry, 
-        #     "/fmu/out/vehicle_odometry", self.vehicle_odom_callback, qos_profile)
+            '/vicon/Turner_x500/Turner_x500', self.x500_callback, 10)
+        
+        # Vehicle position/clock subscriber
+        self.vehicle_attitude_sub = self.create_subscription(VehicleOdometry, 
+            "/fmu/out/vehicle_attitude", self.vehicle_attitude_callback, qos_profile) 
+        
+        # External vision publisher
+        self.vehicle_odometry_pub = self.create_publisher(VehicleOdometry, 
+            '/fmu/in/vehicle_visual_odometry', qos_profile)
+        
+        # Offboard control publishers
         self.publisher_offboard_mode = self.create_publisher(OffboardControlMode, 
             '/fmu/in/offboard_control_mode', qos_profile)
         self.publisher_trajectory = self.create_publisher(TrajectorySetpoint, 
             '/fmu/in/trajectory_setpoint', qos_profile)
-        self.actuate_servo_pub = self.create_publisher(Bool, 
-            '/actuate_servo', 10)
         
         timer_period = 0.5  # seconds
         self.timer = self.create_timer(timer_period, self.cmdloop_callback)
         
         # Intialize Variables
         self.timesync = 0
-        self.position_setpoint = None
-        self.local_position = None
-        self.is_target_captured = False
         
-        self.get_logger().info("Initialized offboard control node.")
+        self.get_logger().info("Initialized stationary_capture_v3.")
         
-    # Vicon motion capture callback function. Stores position setpoint of vehicle.
-    def mocap_callback(self, msg):
+    # Callback function for local position subscriber.
+    def x500_callback(self, msg):
         # Get position data from Vicon message (ENU coordinates)
         x_pos = msg.x_trans/1000.0
         y_pos = msg.y_trans/1000.0
         z_pos = msg.z_trans/1000.0
         
-        # Convert and store ENU coordinates as FRD coordinates for PX4
+        # Convert and store ENU coordinates as FRD coordinates for PX
         enu_coordinates = np.float32([x_pos, y_pos, z_pos])
-        self.position_setpoint = np.float32([enu_coordinates[1], enu_coordinates[0], -(enu_coordinates[2] - VETICAL_OFFSET)])
+        frd_coordinates = np.float32([enu_coordinates[1], enu_coordinates[0], -enu_coordinates[2]])
         
-    # Callback function for local position subscriber.
-    def local_position_callback(self, msg):
-        # Calculate distance between drone and target vehicle
-        self.timesync = msg.timestamp
-        self.local_position = np.float32([msg.x, msg.y, msg.z])
-        if not (self.position_setpoint is None):
-            dist = np.linalg.norm(self.local_position - self.position_setpoint)
-        else:
-            dist = np.inf
         
-        if dist < 0.1:
-            self.is_target_captured = True
-            self.get_logger().info("Captured target.")
+        # Publish Vicon position as external vision odometry message to PX4
+        if np.any(frd_coordinates): # If vicon coordinates are non-zero publish coordiantes
+            # Create PX4 message from Vicon position data
+            msg_px4 = VehicleOdometry() # Message to be sent to PX4
+            msg_px4.timestamp = self.timesync # Set timestamp
+            msg_px4.timestamp_sample = self.timesync # Timestamp for mocap sample
+            msg_px4.pose_frame = 2 # FRD from px4 message
+            msg_px4.position = frd_coordinates.tolist() # Convert numpy array to list
+            msg_px4.position_variance = [10**(-6), 10**(-6), 10**(-6)] # Assuming 1mmm standard deviation in world error
+            self.vehicle_odometry_pub.publish(msg_px4)
             
     def cmdloop_callback(self):
         # Publish offboard control modes
@@ -122,42 +120,17 @@ class OffboardControl(Node):
         offboard_msg.velocity=False
         offboard_msg.acceleration=False
         self.publisher_offboard_mode.publish(offboard_msg)
-        
-        # # Publish servo commands
-        # servo_msg = ActuatorServos()
-        # servo_msg.timestamp = self.timesync
-        # servo_msg.control = [nan, nan, nan, nan, nan, nan, nan, nan] # Placeholder for servo commands
-        
-        # Publishs servo actuate command
-        if self.is_target_captured:
-            actuate_servo_msg = Bool()
-            actuate_servo_msg.data = True            
-            self.actuate_servo_pub.publish(actuate_servo_msg)
 
         # Publish trajectory of drone
         trajectory_msg = TrajectorySetpoint()
-        if self.is_target_captured:
-            trajectory_msg.position[0] = 0.0
-            trajectory_msg.position[1] = 0.0
-            trajectory_msg.position[2] = -0.1
-            # servo_msg.control[0] = 1.0 # Close servo 
-        elif self.position_setpoint is not None:
-            trajectory_msg.position[0] = float(self.position_setpoint[0])
-            trajectory_msg.position[1] = float(self.position_setpoint[1])
-            trajectory_msg.position[2] = float(self.position_setpoint[2])
-            # servo_msg.control[0] = -1.0 # Open servo
-        else:
-            trajectory_msg.position[0] = nan
-            trajectory_msg.position[1] = nan
-            trajectory_msg.position[2] = nan
-            # servo_msg.control[0] = nan # Disarm servo
-            
+        trajectory_msg.position[0] = 2.0**0.5
+        trajectory_msg.position[1] = 2.0**0.5
+        trajectory_msg.position[2] = -2.0           
         self.publisher_trajectory.publish(trajectory_msg)
         
-    # # Callback to keep timestamp for synchronization purposes
-    # def vehicle_odom_callback(self, msg):
-    #     self.timesync = msg.timestamp
-
+    # Callback to keep timestamp for synchronization purposes
+    def vehicle_attitude_callback(self, msg):
+        self.timesync = msg.timestamp
 
 def main(args=None):
     rclpy.init(args=args)
@@ -168,7 +141,6 @@ def main(args=None):
 
     offboard_control.destroy_node()
     rclpy.shutdown()
-
 
 if __name__ == '__main__':
     main()

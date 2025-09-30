@@ -27,7 +27,10 @@ setup(
         'console_scripts': [
                 'offboard_control = px4_offboard.offboard_control:main',
                 'visualizer = px4_offboard.visualizer:main',
-                'stationary_capture = px4_offboard.stationary_capture:main',
+                'stationary_capture = px4_offboard.stationary_capture_v3:main',
+                'stationary_capture_sim = px4_offboard.stationary_capture_sim:main',
+                'test = px4_offboard.test:main',
+                'mavlink = px4_offboard.mavlink:main',
         ],
     },
 )
