@@ -87,7 +87,7 @@ class OffboardControl(Node):
         # Intialize Variables
         self.timesync = 0
         
-        self.get_logger().info("Initialized stationary_capture_v3.")
+        self.get_logger().info("Initialized offboard control test.")
         
     # Callback function for local position subscriber.
     def x500_callback(self, msg):

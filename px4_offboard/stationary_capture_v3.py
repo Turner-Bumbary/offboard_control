@@ -37,6 +37,7 @@ __contact__ = "jalim@ethz.ch"
 
 import rclpy
 import numpy as np
+import quaternion
 from rclpy.node import Node
 from rclpy.clock import Clock
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy, QoSDurabilityPolicy
@@ -66,7 +67,7 @@ class OffboardControl(Node):
         
         # Motion capture subscribers
         self.mocap_sub = self.create_subscription(Position, 
-            '/vicon/Turner_small_drone_4/Turner_small_drone_4', self.target_vehicle_callback, 10)
+            '/vicon/Turner_small_drone_5/Turner_small_drone_5', self.target_vehicle_callback, 10)
         self.mocap_sub = self.create_subscription(Position, 
             '/vicon/Turner_x500/Turner_x500', self.x500_callback, 10)
         
@@ -93,6 +94,7 @@ class OffboardControl(Node):
         self.timesync = 0
         self.target_vehicle_position = None
         self.x500_position = None
+        self.quaternion = np.float32([0.0, 0.0, 0.0, 0.0])
         self.is_target_captured = False
         
         self.get_logger().info("Initialized stationary_capture_v3.")
@@ -135,20 +137,38 @@ class OffboardControl(Node):
             self.vehicle_odometry_pub.publish(msg_px4)
             self.x500_position = frd_coordinates
         
-        # Check if target vehicle is within capture range
-        if not (self.target_vehicle_position is None):
-            dist = np.linalg.norm(self.target_vehicle_position - self.x500_position)
+
+        if not self.is_target_captured: # Check if target vehicle is within capture range
+            if (self.target_vehicle_position is not None) and (self.quaternion is not None): # Project the target vehicle's position into the body frame
+                delta = self.target_vehicle_position - self.x500_position
+                NED_position = np.quaternion(0, delta[1], delta[0], -delta[2])
+                
+                # Use quanternion to rotate target_NED_position into body frame
+                q = np.quaternion(self.quaternion[0], self.quaternion[1], self.quaternion[2], self.quaternion[3])
+                q_inv = np.quaternion(self.quaternion[0], -self.quaternion[1], -self.quaternion[2], -self.quaternion[3])
+
+                # Calculate the position in the body frame
+                BODY_position = q_inv * NED_position * q
+                
+                # Extract the x,y,z coordinates from the quaternion
+                x = abs(BODY_position.x)
+                y = abs(BODY_position.y)
+                z = abs(BODY_position.z)
+                
+                if x <= 0.265 and y<= 0.265 and (z >= 0.04 and z <= 0.20): # Check if projected coordinaes are within capture range
+                    if x <= 0.075 or y <= 0.075:
+                        self.is_target_captured = True
+            elif self.target_vehicle_position is not None: # Determine whether the target vehicle is within capture range
+                delta = self.target_vehicle_position - self.x500_position
+                if np.linalg.norm(delta[0:2]) < 0.145 and (delta[2] >= 0.04 and delta[2] <= 0.20):
+                    self.is_target_captured = True
         else:
-            dist = np.inf
-        
-        if dist < 0.1 and self.is_target_captured == False:
-            self.is_target_captured = True
-            
             # Publish servo message
             actuate_servo_msg = Bool()
             actuate_servo_msg.data = True            
             self.actuate_servo_pub.publish(actuate_servo_msg)
             
+            self.is_target_captured = False
             self.get_logger().info("Captured target.")
             
     def cmdloop_callback(self):
@@ -173,7 +193,7 @@ class OffboardControl(Node):
             trajectory_msg.position[1] = 0.0
             trajectory_msg.position[2] = -1.0
             # servo_msg.control[0] = 1.0 # Close servo 
-        elif self.target_vehicle_position is not None:
+        elif (self.target_vehicle_position is not None) and (self.x500_position is not None):
             vertical_offset = 0.2 # m     
                    
             # Check if drone is alignhed with x,y coordinates of target vehicle
@@ -198,6 +218,7 @@ class OffboardControl(Node):
     # Callback to keep timestamp for synchronization purposes
     def vehicle_attitude_callback(self, msg):
         self.timesync = msg.timestamp
+        self.quaternion = np.float32(msg.q) / np.linalg.norm(np.float32(msg.q))
 
 
 def main(args=None):
