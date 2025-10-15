@@ -84,7 +84,7 @@ class OffboardControl(Node):
         self.actuate_servo_pub = self.create_publisher(Bool, 
             '/actuate_servo', 10)
         
-        timer_period = 0.5  # seconds
+        timer_period = 0.2  # seconds
         self.timer = self.create_timer(timer_period, self.cmdloop_callback)
         
         # Intialize Variables
@@ -135,27 +135,8 @@ class OffboardControl(Node):
         
 
         if not self.is_target_captured: # Check if target vehicle is within capture range
-            # if (self.target_vehicle_position is not None) and (self.quaternion is not None): # Project the target vehicle's position into the body frame
-            #     delta = self.target_vehicle_position - self.x500_position
-            #     NED_position = np.array[(0, delta[1], delta[0], -delta[2])]
-                
-            #     # Use quanternion to rotate target_NED_position into body frame
-            #     q = np.array([self.quaternion[0], self.quaternion[1], self.quaternion[2], self.quaternion[3]])
-            #     q_inv = np.array[(self.quaternion[0], -self.quaternion[1], -self.quaternion[2], -self.quaternion[3])]
-
-            #     # Calculate the position in the body frame
-            #     BODY_position = OffboardControl.quaternion_multiply(q_inv, NED_position)
-            #     BODY_position = OffboardControl.quaternion_multiply(BODY_position, q)
-                
-            #     # Extract the x,y,z coordinates from the quaternion
-            #     x = abs(BODY_position[1])
-            #     y = abs(BODY_position[2])
-            #     z = abs(BODY_position[3])
-                
-            #     if x <= 0.265 and y<= 0.265 and (z >= 0.04 and z <= 0.20): # Check if projected coordinaes are within capture range
-            #         if x <= 0.075 or y <= 0.075:
-            #             self.is_target_captured = True
-            if np.any(self.x500_position) and np.any(self.target_vehicle_position): # Determine whether the target vehicle is within capture range
+            # Determine whether the target vehicle is within capture range
+            if np.any(self.x500_position) and np.any(self.target_vehicle_position):
                 delta = self.target_vehicle_position - self.x500_position
                 if np.linalg.norm(delta[0:2]) < 0.145 and (delta[2] >= -0.20 and delta[2] <= -0.04):
                     self.is_target_captured = True
