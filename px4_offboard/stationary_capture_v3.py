@@ -51,8 +51,6 @@ from std_msgs.msg import Bool
 from vicon_receiver.msg import Position
 from math import nan
 
-VETICAL_OFFSET = 0.075 # m
-
 class OffboardControl(Node):
 
     def __init__(self):
@@ -107,7 +105,7 @@ class OffboardControl(Node):
         
         # Convert and store ENU coordinates as FRD coordinates for PX4
         enu_coordinates = np.float32([x_pos, y_pos, z_pos])
-        frd_coordinates = np.float32([enu_coordinates[1], enu_coordinates[0], -(enu_coordinates[2] - VETICAL_OFFSET)])
+        frd_coordinates = np.float32([enu_coordinates[1], enu_coordinates[0], -enu_coordinates[2]])
         
         if np.any(frd_coordinates): # If vicon coordinates are non-zero update target vehicle position
             self.target_vehicle_position = frd_coordinates
@@ -137,29 +135,29 @@ class OffboardControl(Node):
         
 
         if not self.is_target_captured: # Check if target vehicle is within capture range
-            if (self.target_vehicle_position is not None) and (self.quaternion is not None): # Project the target vehicle's position into the body frame
-                delta = self.target_vehicle_position - self.x500_position
-                NED_position = np.array[(0, delta[1], delta[0], -delta[2])]
+            # if (self.target_vehicle_position is not None) and (self.quaternion is not None): # Project the target vehicle's position into the body frame
+            #     delta = self.target_vehicle_position - self.x500_position
+            #     NED_position = np.array[(0, delta[1], delta[0], -delta[2])]
                 
-                # Use quanternion to rotate target_NED_position into body frame
-                q = np.array([self.quaternion[0], self.quaternion[1], self.quaternion[2], self.quaternion[3]])
-                q_inv = np.array[(self.quaternion[0], -self.quaternion[1], -self.quaternion[2], -self.quaternion[3])]
+            #     # Use quanternion to rotate target_NED_position into body frame
+            #     q = np.array([self.quaternion[0], self.quaternion[1], self.quaternion[2], self.quaternion[3]])
+            #     q_inv = np.array[(self.quaternion[0], -self.quaternion[1], -self.quaternion[2], -self.quaternion[3])]
 
-                # Calculate the position in the body frame
-                BODY_position = OffboardControl.quaternion_multiply(q_inv, NED_position)
-                BODY_position = OffboardControl.quaternion_multiply(BODY_position, q)
+            #     # Calculate the position in the body frame
+            #     BODY_position = OffboardControl.quaternion_multiply(q_inv, NED_position)
+            #     BODY_position = OffboardControl.quaternion_multiply(BODY_position, q)
                 
-                # Extract the x,y,z coordinates from the quaternion
-                x = abs(BODY_position[1])
-                y = abs(BODY_position[2])
-                z = abs(BODY_position[3])
+            #     # Extract the x,y,z coordinates from the quaternion
+            #     x = abs(BODY_position[1])
+            #     y = abs(BODY_position[2])
+            #     z = abs(BODY_position[3])
                 
-                if x <= 0.265 and y<= 0.265 and (z >= 0.04 and z <= 0.20): # Check if projected coordinaes are within capture range
-                    if x <= 0.075 or y <= 0.075:
-                        self.is_target_captured = True
-            elif self.target_vehicle_position is not None: # Determine whether the target vehicle is within capture range
+            #     if x <= 0.265 and y<= 0.265 and (z >= 0.04 and z <= 0.20): # Check if projected coordinaes are within capture range
+            #         if x <= 0.075 or y <= 0.075:
+            #             self.is_target_captured = True
+            if np.any(self.x500_position) and np.any(self.target_vehicle_position): # Determine whether the target vehicle is within capture range
                 delta = self.target_vehicle_position - self.x500_position
-                if np.linalg.norm(delta[0:2]) < 0.145 and (delta[2] >= 0.04 and delta[2] <= 0.20):
+                if np.linalg.norm(delta[0:2]) < 0.145 and (delta[2] >= -0.20 and delta[2] <= -0.04):
                     self.is_target_captured = True
                     
             # If vehicle is now captured, publish servo message
@@ -170,7 +168,7 @@ class OffboardControl(Node):
                 self.get_logger().info("Captured target.")
         else:
             # Check whether target vehicle is still within the cage
-            if np.any(self.target_vehicle_position) and np.linalg.norm(self.target_vehicle_position - self.x500_position) >= 0.35:
+            if np.any(self.x500_position) and np.any(self.target_vehicle_position) and np.linalg.norm(self.target_vehicle_position - self.x500_position) >= 0.35:
                 self.is_target_captured = False
                 self.get_logger().info("Lost target.")
                 
@@ -207,7 +205,7 @@ class OffboardControl(Node):
             vertical_offset = 0.2 # m     
                    
             # Check if drone is alignhed with x,y coordinates of target vehicle
-            if np.linalg.norm(self.x500_position[0:2] - self.target_vehicle_position[0:2]) < 0.15:
+            if np.linalg.norm(self.x500_position[0:2] - self.target_vehicle_position[0:2]) < 0.145:
                 # Set trajectory to target vehicle position
                 trajectory_msg.position[0] = float(self.target_vehicle_position[0])
                 trajectory_msg.position[1] = float(self.target_vehicle_position[1])
